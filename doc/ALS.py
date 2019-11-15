@@ -115,17 +115,16 @@ def model_fit(r, m, l, k = 5):
     return  min_cv_err, final_model
 
 
-ranks = [5]
-maxIters = [5]
-regParams = [0.1]
+# ranks = [5]
+# maxIters = [5]
+# regParams = [0.1]
 
-# ranks = [5,10,20]
-# maxIters = [5, 50,100]
-# regParams = [0.01, 0.05, 0.1]
+ranks = [5,10,20]
+regParams = [0.01, 0.05, 0.1]
 
 results = {}
-for r, m, l in itertools.product(ranks, maxIters, regParams):
-    cv_err, model = model_fit(r,m,l,5)
+for r, l in itertools.product(ranks,regParams):
+    cv_err, model = model_fit(r,100,l,5)
     params = (r,m,l)
     results[cv_err] = (model, params)
 
