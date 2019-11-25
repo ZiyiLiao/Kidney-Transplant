@@ -48,7 +48,7 @@ class SGD:
         train_data, test_data = train_test_split(self.data, test_size = test_size, random_state = seed)
         return train_data, test_data
     
-    def fit(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0):
+    def fit(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0 , elapse = False):
         """
         A method to perform matrix factorization using Stochastic Gradient Descent
 
@@ -69,7 +69,7 @@ class SGD:
         bu = np.zeros(self.user_count)
         bi = np.zeros(self.item_count)
 
-           
+        start_time = time.time()
         for this_epoch in range(num_epoch):
             
             for row in data:
@@ -90,7 +90,10 @@ class SGD:
                     qif = q[i,f]
                     p[u,f]  += lr * (err * qif - reg * puf)
                     q[i,f]  += lr * (err * puf - reg * qif)
-
+        end_time = time.time()
+        last = round((end_time - start_time), 4)
+        if elapse:
+            print("Total time: {}s".format(last))
                     
         # update the instance variariables
         self.bu = bu
