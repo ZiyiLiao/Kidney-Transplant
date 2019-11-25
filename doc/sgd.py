@@ -3,6 +3,7 @@ import numpy as np
 import itertools
 from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
+import time
 
 class SGD:
     """
@@ -17,7 +18,7 @@ class SGD:
 
     """
 
-    def __init__(self,data_dir,sample = False):
+    def __init__(self,data_dir, sample):
         
         """
         Attributes:
@@ -49,13 +50,12 @@ class SGD:
     
     def fit(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0):
         """
-        A function to perform matrix factorization
+        A method to perform matrix factorization using Stochastic Gradient Descent
 
-        method    : method for solving matrix factorization problem
         lr        : learning rate, Defalt: 10
         reg       : regularization parameter: lambda, Defalt: 0.4
         rank      : number of latent variables, Default : 10
-        num_batch : number of iteration of the SGD procedure, Default:10
+        num_epoch : number of iteration of the SGD procedure, Default:10
         seed      : seed of calling random state
         """
 
@@ -158,7 +158,7 @@ class SGD:
             params.append((mr, l, r, rk, nb, k))
         self.params = params
 
-    def tuningParams(self,data, verbose = False):
+    def tuningParams(self,data, verbose = False, elapse = False):
 
         loss = []
         for comb in self.params:

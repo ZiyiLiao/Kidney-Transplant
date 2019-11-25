@@ -1,143 +1,199 @@
-"""
-
-This is the file to output Absolute Least Square function
-Here using PySpark to perform
-
-"""
-
-# import packages
-
-import findspark
-findspark.init('/Users/ziyi./spark-2.4.4-bin-hadoop2.7')
-
 import pandas as pd
-import pyspark # only run after findspark.init()
-from pyspark.sql import SparkSession
-from pyspark.ml.recommendation import ALS
-from pyspark.ml.evaluation import RegressionEvaluator
+import numpy as np
+from matplotlib import pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
 import itertools
-from pyspark import SparkContext
-from functools import reduce 
-from pyspark.sql import DataFrame
-from pyspark.conf import SparkConf
-
-# initiate spark
-spark = SparkSession.builder.enableHiveSupport().\
-    config('spark.executor.memory', '15g'). \
-    config('spark.executor.cores','20').  \
-    config('spark.executor.instances','20'). \
-    config('spark.driver.memory','20g'). \
-    getOrCreate()  
-
-# Data preparation
-
-movies = pd.read_csv('movies.csv')
-df = pd.read_csv('ratings.csv')
-del df['timestamp']
+import time
 
 
-# ratings = spark.createDataFrame(df)
-# ratings.show()
+class alsData:
 
-print(df.shape)
+    """
+    The class for changing data to a format fit ALS algorithm
+    """
+    def __init__(self, data, R0):
 
-
-"""
-
-Calculate Sparsity
-
-"""
-numerator = ratings.select("rating").count()
-num_users = ratings.select("userId").distinct().count()
-num_movies = ratings.select("movieId").distinct().count()
-sparsity = (1.0 - (numerator *1.0)/(num_users * num_movies))*100
-print("The ratings dataframe is ", "%.2f" % sparsity + "% empty.")
-
-
-
-"""
-ALS Model
-
-"""
-
-
-# convert the columns to the proper data types
-ratings = ratings.select(ratings.userId.cast("integer"), 
-                         ratings.movieId.cast("integer"), 
-                         ratings.rating.cast("double"))
-# split data
-(training_data, test_data) = ratings.randomSplit([0.8, 0.2], seed=2019)
-
-# perform the cross validation to find a set of ideal tuning parameters
-def model_fit(r, m, l, k = 5):
-    '''
-    r: rank -> number of latent features
-    m: maximum iterations
-    l: lambda -> parameter in the regularization
-    k: number of folds
-    '''
-    
-    # model
-    als = ALS(userCol = 'userId', itemCol = 'movieId',ratingCol = 'rating',
-                rank = r , maxIter = m, regParam = l,
-               nonnegative = True, coldStartStrategy = 'drop',
-               implicitPrefs = False)
-    
-    # evaluator
-    evaluator = RegressionEvaluator(metricName="rmse", labelCol="rating", predictionCol="prediction") 
-    models = {}
-    
-    # Split training data in to k-fold
-    folds = training_data.randomSplit([1/k]*k, seed=2019)
-    
-    # a function to combine train_data
-    def unionAll(dfs):
-        return reduce(lambda df1,df2: df1.union(df2.select(df1.columns)), dfs) 
-    
-    # for k-folds, split the train_data and cv_data
-    for i in range(5):
-        res = folds[:i]+folds[i+1:]
-        train_data = unionAll(res)
-        cv_data = folds[i]
+    # Q : the user-item matrix based on given data
+    # R : 1 means the data contains user_u to item_i rating, while 0 means doesn't contain
+        self.data = data
+        self.R0 = R0
+        self.Q, self.R = self._prepare_QR(self.data)
         
-        # model
-        model = als.fit(training_data)
-        cv_prediction = model.transform(cv_data)
+
+    def _prepare_QR(self, data):
+        temp = self.R0.copy()
+        for idx, row in data.iterrows():
+            u = int(row['userId'])
+            i = int(row['movieId'])
+            temp[i][u] = row['rating']
+
+        Q = temp.values
+        R = (Q > 0) *1
+        return Q, R
+
+
+
+class ALS:
+    """
+    The class for performing collaborative filtering with Alternating Least Squares
+
+    Mesures for evaluation:
+        1. RMSE: root mean square error
+        2. MAE : mean absolute error
+
+    """
+    
+    def __init__(self, data_dir, sample = False):
+        self.df = pd.read_csv(data_dir)
+        if sample:
+            self.df = self.df[0:1000]
+        self.data = (self.df.pivot(index='userId', columns='movieId', values='rating')).fillna(0)
+        # user-item matrix
+        self.Q = self.data.values
+        self.R0 = self.data * 0
+        # user matrix
+        self.p = None
+        # item matrix
+        self.q = None
+        # kfolds
+        self.K = None
+        self.error = None
+        self.trainsets = None
+        self.testsets = None
+        self.params = None
+        self.best_params = None
         
-                
-        # calculate rmse
-        cv_rmse = evaluator.evaluate(cv_prediction)
-        models[cv_rmse] = model
+        
+                    
+    def split(self,test_size = 0.25, seed = 0):
+        """A method for train_test_split"""
+        train_data, test_data = train_test_split(self.df,test_size = test_size, random_state = seed)
+        train_data = alsData(train_data, self.R0)
+        test_data = alsData(test_data, self.R0)
+        self.trainsets = [train_data]
+        self.testsets = [test_data]
+        return train_data , test_data
+            
     
-    min_cv_err = min(models)
-    final_model = models[min_cv_err]
+    def fit(self, data, rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', elapse = False):
+        """
+        A method to perform matrix factorization
+
+        data      : An alsData format
+        reg       : regularization parameter: lambda, Defalt: 0.4
+        rank      : number of latent variables, Default : 10
+        num_epoch : number of iteration of the SGD procedure, Default:10
+        measure   : evaluation method
+        elapse.   : if true, print the time of fitting 
+
+        """
+        I = np.eye(rank)
+        np.random.seed(0)
+        p = np.random.normal(2.5,1, size = (self.Q.shape[0], rank))
+        q = np.random.normal(2.5,1, size = (self.Q.shape[1],rank))
+
+        start_time = time.time()
+        for this_epoch in range(num_epoch):
+
+            for u, Iu in enumerate(data.R):
+                j = np.nonzero(Iu)[0]
+                nu = sum(Iu)
+                if nu != 0:
+                    A = q[j,:].T.dot(q[j,:]) + nu * reg * I
+                    r = data.Q[u][data.Q[u]!=0]
+                    V = q[j,:].T.dot(r.T)
+                    p[u,:] = np.dot(np.linalg.inv(A), V)
+
+            for i, Ii in enumerate(data.R.T):
+                j = np.nonzero(Ii)[0]
+                ni = sum(Ii)
+                if ni != 0:
+                    A = p[j,:].T.dot(p[j,:]) + ni * reg * I
+                    r = data.Q.T[i][data.Q.T[i]!=0]
+                    V = p[j,:].T.dot(r) 
+                    q[i,:] = np.dot(np.linalg.inv(A), V)
+        end_time = time.time()
+        elap = round((end_time - start_time), 4)
+        if elapse:
+            print(str(elap) + "s")
+        self.q = q
+        self.p = p
+        self.error = self.err(data)
+        
+        
+    def err(self, data, measure = 'rmse'):
+        """data: als data"""
+        if measure == 'rmse':
+            loss = np.sum((data.R * (self.Q - np.dot(self.p, self.q.T))) ** 2)/ np.sum(data.R)
+            return np.sqrt(loss)
+        if measure == 'mae':
+            loss = np.sum(np.abs(data.R * (self.Q - np.dot(self.p, self.q.T))))/ np.sum(data.R) 
+            return loss
     
-    return  min_cv_err, final_model
-
-
-# ranks = [5]
-# maxIters = [5]
-# regParams = [0.1]
-
-ranks = [5,10,20]
-regParams = [0.01, 0.05, 0.1]
-
-results = {}
-for r, l in itertools.product(ranks,regParams):
-    cv_err, model = model_fit(r,100,l,5)
-    params = (r,m,l)
-    results[cv_err] = (model, params)
-
-err = min(results)
-best_model = results[err][0]
-best_params = results[err][1]
-rank = best_params[0]
-itr = best_params[1]
-lmda = best_params[2]
-
-
-print("**best model**")
-print("rank: ", rank, " max iterations: ", itr, " lambda: ", lmda)
-print("cross validation: ", err)
-
-
+    def kfolds_split(self, als_data, K = 3, seed = 0):
+        kf = KFold(n_splits= K, random_state = seed, shuffle = True)
+        self.K = K
+        trainsets = []
+        cvsets = []
+        
+        for train_index, cv_index in kf.split(als_data.data):
+            trainset = alsData(als_data.data.iloc[train_index,:], self.R0)
+            cvset = alsData(als_data.data.iloc[cv_index,:], self.R0)
+            
+            trainsets.append(trainset)
+            cvsets.append(cvset)
+        self.trainsets = trainsets
+        self.cvsets = cvsets
+        
+    def cv(self,rank = 10, reg = 0.1, num_epoch = 1, measure = 'rmse', verbose = True, plot = False):
+        train_loss = []
+        test_loss = []
+        for k in range(self.K):
+            train = self.trainsets[k]
+            test = self.cvsets[k]
+            self.fit(train, rank = rank, num_epoch = num_epoch, measure = measure)
+            train_loss.append(self.error)
+            test_loss.append(self.err(test,measure = measure))
+            
+            if verbose:
+                print("Train {} : {}   Cross-Validation {} : {}".format(measure, train_loss[k], measure,test_loss[k]))
+        
+        if plot:
+            x = np.arange(self.K) + 1
+            plt.title("Train error and cross-validation error")
+            plt.plot(x,train_loss, label = "train error") 
+            plt.plot(x,test_loss, label = "test error") 
+            plt.xlabel("number of folds")
+            plt.ylabel("{}".format(measure))
+            plt.legend()
+            plt.show()
+        
+        return np.min(test_loss)
+    
+    def gridParams(self, measure = ['rmse'], rank = [10],  reg = [0.1] , num_epoch = [10], K = [3]):
+        params = []
+        for mr, rk, r, np, k in itertools.product( measure, rank, reg, num_epoch, K):
+            params.append((mr, rk, r, np, k))
+        self.params = params
+    
+    def tuningParams(self, data, verbose = True, elapse = False):
+        self.kfolds_split(data)
+        loss = []
+        start_time = time.time()
+        for comb in self.params:
+            if verbose == True:
+                print("stage {}".format(comb))
+            test_err = self.cv(measure = comb[0], rank = comb[1], reg = comb[2], num_epoch = comb[3],verbose = verbose)
+            loss.append(test_err)
+            print("Min cv err: {}".format(test_err))
+        end_time = time.time()
+        elap = round((end_time - start_time), 4)
+        if elapse:
+            print("Total time:{}".format(elap))
+        idx = np.argmin(loss)
+        self.best_score = loss[idx]
+        self.best_params = self.params[idx]
+        
+        self.fit(data, rank = self.best_params[1],reg = self.best_params[2],  num_epoch = self.best_params[3])        
+        
