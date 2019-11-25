@@ -2,20 +2,18 @@ import pandas as pd
 import numpy as np
 import itertools
 from matplotlib import pyplot as plt
+from sklearn.model_selection import train_test_split
 
-class Collaborative:
+class SGD:
     """
-    The class for performing collaborative filtering
-
-    Methods for solving matrix factorization: 
-        1. Stochastic Gradient Descent
-        2. Weighted Alernating Least Square
+    The class for performing collaborative filtering with Stochastic Gradient Descent
 
     Methods for post-processing:
         1. KNN
 
     Mesures for evaluation:
         1. RMSE: root mean square error
+        2. MAE : mean absolute error
 
     """
 
@@ -43,17 +41,13 @@ class Collaborative:
         self.bi = None
         self.p = None
         self.q = None
+        self.h = 0.0000001
 
     def split(self,test_size, seed = 0):
-        test_size = test_size
-        np.random.seed(seed)
-        temp_data = np.random.permutation(self.data)
-        test_idx = int(len(self.data) * test_size)
-        test_data = temp_data[0:test_idx]
-        train_data = temp_data[test_idx:]
+        train_data, test_data = train_test_split(self.data, test_size = test_size, random_state = seed)
         return train_data, test_data
     
-    def MF(self, data, method = 'sgd', lr = 0.005,reg = 0.4, rank = 10, num_batch = 10, seed = 0):
+    def fit(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0):
         """
         A function to perform matrix factorization
 
@@ -65,81 +59,66 @@ class Collaborative:
         seed      : seed of calling random state
         """
 
+            
         # initialize user matrix and item matrix
         np.random.seed(seed)
-        p = np.random.normal(0,2.5, size = (self.user_count, rank))
-        q = np.random.normal(0,2.5, size = (self.item_count, rank))
+        p = np.random.normal(2.5,1, size = (self.user_count, rank))
+        q = np.random.normal(2.5,1, size = (self.item_count, rank))
 
         # initialize bias
         bu = np.zeros(self.user_count)
         bi = np.zeros(self.item_count)
 
-        if method == 'sgd':    
-            num = len(data)
-            batch_size = num//num_batch
-            s = np.append(np.repeat(np.arange(0,num_batch-1),batch_size) , [4]*(len(data) - (num_batch-1) * batch_size))
+           
+        for this_epoch in range(num_epoch):
             
-            for this_batch in range(num_batch):
-                for row in data[s == this_batch,:]:
-                    u = int(row[0])-1
-                    i = int(row[1])-1
+            for row in data:
+                u = int(row[0])-1
+                i = int(row[1])-1
 
-                    # prediction
-                    pred = self.mean + bu[u] + bi[i] + np.dot(p[u,:], q[i,:])          
-                    err = row[2] - pred
+                # prediction
+                pred = self.mean + bu[u] + bi[i] + np.dot(p[u,:], q[i,:])          
+                err = row[2] - pred
                     
-                    # update user and item latent feature matrices
-                    for f in range(rank):
-                        puf = p[u,f]
-                        qif = q[i,f]
-                        p[u,f]  += lr * (err * qif - reg * puf)
-                        q[i,f]  += lr * (err * puf - reg * qif)
+                # update bias
+                bu[u] += lr * (err - reg * bu[u])
+                bi[i] += lr * (err - reg * bi[i])
 
-                          
-        elif method == 'als':             
-            for this_batch in range(num_batch):
+                # update user and item latent feature matrices
+                for f in range(rank):
+                    puf = p[u,f]
+                    qif = q[i,f]
+                    p[u,f]  += lr * (err * qif - reg * puf)
+                    q[i,f]  += lr * (err * puf - reg * qif)
 
-                for row in data:
-                    u = int(row[0])-1
-                    i = int(row[1])-1
-
-                    # prediction
-                    pred = self.mean + bu[u] + bi[i] + np.dot(p[u,:], q[i,:])          
-                    err = row[2] - pred
-                        
-                    # update bias
-                    nu = np.sum(data[:,0] == u)
-                    ni = np.sum(data[:,1] == i)
-                    bu[u] += lr * (err - reg * nu * bu[u])
-                    bi[i] += lr * (err - reg * ni * bi[i])
                     
-                    # update user and item latent feature matrices
-                    for f in range(rank):
-                        puf = p[u,f]
-                        qif = q[i,f]
-                        p[u,f]  += lr * (err * qif - reg * nu * puf)
-                        q[i,f]  += lr * (err * puf - reg * ni * qif)
-        
+        # update the instance variariables
         self.bu = bu
         self.bi = bi
         self.p = p
         self.q = q
 
+
                     
     def err(self, testset, measure):
         """A method to calculate loss"""
 
-        if measure == 'rmse':
-            err = 0
-            for row in testset:
-                u = int(row[0])-1
-                i = int(row[1])-1
-
+        err = 0
+        for row in testset:
+            u = int(row[0])-1
+            i = int(row[1])-1
+            
+            if measure == 'rmse':
                 # prediction
                 err += (row[2] - self.mean - self.bu[u] - self.bi[i]- np.dot(self.p[u,:], self.q[i,:]))**2
+                return np.sqrt(err/len(testset))
+            if measure == 'mae':
+                err += np.abs(row[2] - self.mean - self.bu[u] - self.bi[i]- np.dot(self.p[u,:], self.q[i,:]))
+                return err/len(testset)
             return np.sqrt(err/len(testset))
+
         
-    def cv(self, data,method, measure,lr = 0.005, reg = 0.4, rank = 10, num_batch = 10, K = 5, verbose = True, plot = False, seed = 0):
+    def cv(self, data, measure,lr = 0.005, reg = 0.4, rank = 10, num_epoch = 10, K = 5, verbose = True, plot = False, seed = 0):
         """A method fo perform cross-validation"""
 
         np.random.seed(seed)
@@ -155,12 +134,12 @@ class Collaborative:
         for k in range(K):
             train = temp_data[s!=k,:]
             test = temp_data[s==k,:]
-            self.MF(train,method = method,lr = lr,reg = reg,rank = rank,num_batch = num_batch)
+            self.fit(train, lr = lr,reg = reg,rank = rank,num_epoch = num_epoch)
             train_err[k] = self.err(train, measure)
             cv_err[k] = self.err(test, measure)
             if verbose:
                 print("Train {} : {}   Cross-Validation {} : {}".format(measure, round(train_err[k],4), measure, round(cv_err[k],4)))
-        
+
         if plot:
             x = np.arange(K) + 1
             plt.title("Train error and cross-validation error")
@@ -173,10 +152,10 @@ class Collaborative:
         
         return np.amin(cv_err)
     
-    def gridParams(self, method = ['sgd'], measure = ['rmse'], lr = [0.005], reg = [0.4] ,rank = [10], num_batch = [10], K = [5]):
+    def gridParams(self, measure = ['rmse'], lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10], K = [5]):
         params = []
-        for md, mr, l, r, rk, nb, k in itertools.product(method, measure, lr, reg, rank, num_batch, K):
-            params.append((md, mr, l, r, rk, nb, k))
+        for mr, l, r, rk, nb, k in itertools.product( measure, lr, reg, rank, num_epoch, K):
+            params.append((mr, l, r, rk, nb, k))
         self.params = params
 
     def tuningParams(self,data, verbose = False):
@@ -185,23 +164,24 @@ class Collaborative:
         for comb in self.params:
             if verbose == True:
                 print("stage {}".format(comb))
-            err = self.cv(data,method = comb[0], measure = comb[1], lr = comb[2], reg = comb[3], rank = comb[4], num_batch = comb[5], K = comb[6],verbose = verbose)
+            err = self.cv(data, measure = comb[0], lr = comb[1], reg = comb[2], rank = comb[3], num_epoch = comb[4], K = comb[5],verbose = verbose)
             loss.append(err)
             print("Min cv err: {}".format(err))
         idx = np.argmin(loss)
         self.best_score = loss[idx]
         self.best_params = self.params[idx]
-        self.MF(data,method = self.best_params[0],lr = self.best_params[2], reg = self.best_params[3], rank = self.best_params[4], num_batch = self.best_params[5])
+        self.fit(data,lr = self.best_params[1], reg = self.best_params[2], rank = self.best_params[3], num_epoch = self.best_params[4])        
 
 
 
 if __name__ == '__main__':
 
-    func = Collaborative('ratings.csv',sample = True)
-    trainset, testset = func.split(0.2)
-    #func.gridParams(method = ['sgd','als'], num_batch = [10,20], reg = [0.2,0.4], lr = [0.001,0.005], rank = [10,20])
-    func.gridParams(method = ['sgd','als'], num_batch = [10], reg = [0.4], lr = [0.005,0.002], rank = [10])
+    func = SGD('../data/ratings.csv',sample = True)
+    trainset, testset = func.split(0.25)
+    func.gridParams(num_epoch = [10,20], reg = [0.2,0.4], lr = [0.001,0.005], rank = [10,20])
     func.tuningParams(trainset, verbose = True)
-    print("Best Method: {}; \nBest learning rate: {}; Best lambda: {}; Best rank: {}; Best number of batch: {}".format(func.best_params[0],func.best_params[2],func.best_params[3], func.best_params[4],func.best_params[5]))
+    #func.fit(trainset)
+    #print(func.err(trainset, measure = 'rmse'))
+    print("Best learning rate: {}; Best lambda: {}; Best rank: {}; Best number of epoch: {}".format(func.best_params[1],func.best_params[2], func.best_params[3],func.best_params[4]))
 
 
