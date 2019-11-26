@@ -11,7 +11,7 @@ import time
 class svdData:
 
     """
-    The class for changing data to a format fit ALS algorithm
+    The class for changing data to a format fit SVD algorithm
     """
     def __init__(self, data, R0):
 
@@ -39,7 +39,7 @@ class svdData:
 
 class SVD:
     """
-    The class for performing matrix factorization with Singular Vector Deviation
+    The class for performing matrix factorization with Singular Value Decomposition
 
     Methods for pre-processing:
         1. Stochastic  Gradient Descent
@@ -166,7 +166,7 @@ class SVD:
         
     def als(self, data, rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', elapse = False):
         """
-        A method to perform matrix factorization using Alternating Least Square
+        A method to perform matrix factorization using Alternating Least Squares
 
         data      : An svdData format
         reg       : regularization parameter: lambda, Defalt: 0.4
@@ -210,8 +210,11 @@ class SVD:
         self.p = p
         self.error = self.err(data, measure)
         
-    def err(self, data, measure = 'rmse'):
+    
+
+    def err(self, data, measure = 'rmse'): 
         """A method to calculate loss"""
+        
         if self._algo == 'sgd':
             err = 0
             for uid, mid, r in data.ratings:
@@ -232,30 +235,10 @@ class SVD:
                 loss = np.sum(np.abs(data.R * (self.Q - np.dot(self.p, self.q.T))))/ np.sum(data.R) 
                 return loss
 
-    def KNN(self, testset, K = 5, measure = 'rmse'):
-        self.sim = pairwise_distances(self.p, metric = "cosine")
-        err = 0
-        for uid, mid, r, in testset.ratings:
-            u = uid - 1
-            i = self.item_dict[mid]
-            neighbors = np.argsort(self.sim[u])[-K-1:-1]
-            sum_sim = 0
-            sum_rating = 0
-            
-            
-            for k in range(K):
-                rate = np.dot(self.p[neighbors[k],:], self.q[i,:])
-                if rate > 0:
-                    sum_sim += self.sim[u][neighbors[k]]
-                    sum_rating += rate * self.sim[u][neighbors[k]]
-
-
-            est_rating = sum_rating/sum_sim
-            if measure == 'rmse':
-                err += (r - est_rating) ** 2
-                return np.sqrt(err/len(testset.ratings))
 
     def kfold_split(self, svd_data, K = 3,seed = 0):
+        """ A method to split train data into K folds"""
+
         kf = KFold(n_splits= K, random_state = seed, shuffle = True)
         trainsets = []
         testsets = []
@@ -300,6 +283,8 @@ class SVD:
         return np.amin(test_err)
     
     def gridParams(self, algo, lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10]):
+        """ A method to grid parameters"""
+
         params = []
         self._algo = algo
         if self._algo == 'sgd':
@@ -311,6 +296,8 @@ class SVD:
         self.params = params
 
     def tuningParams(self,data, K = 3, measure = 'rmse',verbose = False):
+        """ A method to tune parameters"""
+
         loss = []
         self.kfold_split(data, K= K)
         for comb in self.params: 
