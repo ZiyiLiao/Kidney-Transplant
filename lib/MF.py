@@ -8,10 +8,10 @@ from sklearn.metrics import pairwise_distances
 import time
 
 
-class svdData:
+class mfData:
 
     """
-    The class for changing data to a format fit SVD algorithm
+    The class for changing data to a format fit ALS algorithm
     """
     def __init__(self, data, R0):
 
@@ -37,12 +37,13 @@ class svdData:
         return Q, R
 
 
-class SVD:
+class MF:
     """
-    The class for performing matrix factorization with Singular Value Decomposition
+    The class for performing matrix factorization with Singular Vector Deviation
 
-    Methods for pre-processing:
-        1. Stochastic  Gradient Descent
+
+    Methods for Singular Vector Deviation:
+        1. Stochastic Gradient Descent
         2. Alternating Least Squares
 
     Mesures for evaluation:
@@ -92,8 +93,8 @@ class SVD:
 
     def split(self,test_size, seed = 0):
         train_data, test_data = train_test_split(self.df, test_size = test_size, random_state = seed)
-        train_data = svdData(train_data, self.R0)
-        test_data = svdData(test_data, self.R0)
+        train_data = mfData(train_data, self.R0)
+        test_data = mfData(test_data, self.R0)
         self._trainsets = [train_data]
         self._testsets = [test_data]
         return train_data , test_data
@@ -162,13 +163,13 @@ class SVD:
         self.q = q
         self.error = self.err(data, measure)
         
-        
+ 
         
     def als(self, data, rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', elapse = False):
         """
-        A method to perform matrix factorization using Alternating Least Squares
+        A method to perform matrix factorization using Alternating Least Square
 
-        data      : An svdData format
+        data      : An mfData format
         reg       : regularization parameter: lambda, Defalt: 0.4
         rank      : number of latent variables, Default : 10
         num_epoch : number of iteration of the SGD procedure, Default:10
@@ -210,11 +211,8 @@ class SVD:
         self.p = p
         self.error = self.err(data, measure)
         
-    
-
-    def err(self, data, measure = 'rmse'): 
+    def err(self, data, measure = 'rmse'):
         """A method to calculate loss"""
-        
         if self._algo == 'sgd':
             err = 0
             for uid, mid, r in data.ratings:
@@ -237,8 +235,6 @@ class SVD:
 
 
     def kfold_split(self, svd_data, K = 3,seed = 0):
-        """ A method to split train data into K folds"""
-
         kf = KFold(n_splits= K, random_state = seed, shuffle = True)
         trainsets = []
         testsets = []
@@ -248,8 +244,8 @@ class SVD:
             trainset = svd_data.data.iloc[train_index,:]
             testset = svd_data.data.iloc[test_index,:]
             
-            trainsets.append(svdData(trainset,self.R0))
-            testsets.append(svdData(testset,self.R0))
+            trainsets.append(mfData(trainset,self.R0))
+            testsets.append(mfData(testset,self.R0))
         self._trainsets = trainsets
         self._testsets = testsets
         
@@ -283,21 +279,19 @@ class SVD:
         return np.amin(test_err)
     
     def gridParams(self, algo, lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10]):
-        """ A method to grid parameters"""
-
         params = []
         self._algo = algo
-        if self._algo == 'sgd':
-            for l, r, rk, np in itertools.product(lr, reg, rank, num_epoch):
-                params.append((l, r, rk, np))
+
         if self._algo == 'als':
             for rk, r, np in itertools.product(rank, reg, num_epoch):
                 params.append((rk, r, np))
+        else:
+            for l, r, rk, np in itertools.product(lr, reg, rank, num_epoch):
+                params.append((l, r, rk, np))
+
         self.params = params
 
     def tuningParams(self,data, K = 3, measure = 'rmse',verbose = False):
-        """ A method to tune parameters"""
-
         loss = []
         self.kfold_split(data, K= K)
         for comb in self.params: 
@@ -314,3 +308,25 @@ class SVD:
         self.best_score = loss[idx]
         self.best_params = self.params[idx]
         
+    def KNN(self, train, test, K = 5, measure = 'rmse', elapse = False):
+        sim = pairwise_distances(self.q, metric = "cosine")
+        err = 0
+        start_time = time.time()
+        for uid, mid, r in test.ratings:
+            u = uid - 1
+            i = self.item_dict[mid]
+
+            neighbors_idx = np.argsort(sim[i])
+            neighbor_rating = np.trim_zeros(train.Q[u,neighbors_idx])[0:K]
+            est = sum(neighbor_rating)/np.count_nonzero(neighbor_rating)
+            if measure == 'rmse':
+                err += (r - est) **2
+                return np.sqrt(err/len(test.ratings))
+            elif measure == 'mae':
+                err += np.abs(r - est)
+                return err/len(test.ratings)
+        end_time = time.time()
+        last = end_time - start_time
+        if elapse:
+            print("KNN predict time: {}s".format(last))
+    
