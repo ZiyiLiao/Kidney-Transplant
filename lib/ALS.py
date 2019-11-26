@@ -46,6 +46,7 @@ class ALS:
     
     def __init__(self, data_dir, sample = False):
         self.df = pd.read_csv(data_dir)
+        del self.df['timestamp']
         if sample:
             self.df = self.df[0:1000]
         self.data = (self.df.pivot(index='userId', columns='movieId', values='rating')).fillna(0)
@@ -85,7 +86,7 @@ class ALS:
         rank      : number of latent variables, Default : 10
         num_epoch : number of iteration of the SGD procedure, Default:10
         measure   : evaluation method
-        elapse.   : if true, print the time of fitting 
+        elapse    : if true, print the time of fitting 
 
         """
         I = np.eye(rank)
@@ -114,9 +115,9 @@ class ALS:
                     V = p[j,:].T.dot(r) 
                     q[i,:] = np.dot(np.linalg.inv(A), V)
         end_time = time.time()
-        elap = round((end_time - start_time), 4)
+        last = round((end_time - start_time), 4)
         if elapse:
-            print(str(elap) + "s")
+             print("Total time: {}s".format(last))
         self.q = q
         self.p = p
         self.error = self.err(data)
@@ -146,7 +147,7 @@ class ALS:
         self.trainsets = trainsets
         self.cvsets = cvsets
         
-    def cv(self,rank = 10, reg = 0.1, num_epoch = 1, measure = 'rmse', verbose = True, plot = False):
+    def cv(self,rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', verbose = True, plot = False):
         train_loss = []
         test_loss = []
         for k in range(self.K):
@@ -171,29 +172,26 @@ class ALS:
         
         return np.min(test_loss)
     
-    def gridParams(self, measure = ['rmse'], rank = [10],  reg = [0.1] , num_epoch = [10], K = [3]):
+    def gridParams(self, rank = [10],  reg = [0.1] , num_epoch = [10], K = [3]):
         params = []
-        for mr, rk, r, np, k in itertools.product( measure, rank, reg, num_epoch, K):
-            params.append((mr, rk, r, np, k))
+        for rk, r, np, k in itertools.product(rank, reg, num_epoch, K):
+            params.append((rk, r, np, k))
         self.params = params
     
-    def tuningParams(self, data, verbose = True, elapse = False):
+    def tuningParams(self, data, measure = 'rmse', verbose = True):
         self.kfolds_split(data)
         loss = []
-        start_time = time.time()
+
         for comb in self.params:
+            test_err = self.cv(measure = measure, rank = comb[0], reg = comb[1], num_epoch = comb[2],verbose = verbose)
+            loss.append(test_err)
             if verbose == True:
                 print("stage {}".format(comb))
-            test_err = self.cv(measure = comb[0], rank = comb[1], reg = comb[2], num_epoch = comb[3],verbose = verbose)
-            loss.append(test_err)
-            print("Min cv err: {}".format(test_err))
-        end_time = time.time()
-        elap = round((end_time - start_time), 4)
-        if elapse:
-            print("Total time:{}".format(elap))
+                print("Min cv err: {}".format(test_err))
+
         idx = np.argmin(loss)
         self.best_score = loss[idx]
         self.best_params = self.params[idx]
         
-        self.fit(data, rank = self.best_params[1],reg = self.best_params[2],  num_epoch = self.best_params[3])        
+        #self.fit(data, rank = self.best_params[1],reg = self.best_params[2],  num_epoch = self.best_params[3])        
         
