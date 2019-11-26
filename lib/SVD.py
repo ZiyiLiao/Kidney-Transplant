@@ -8,12 +8,42 @@ from sklearn.metrics import pairwise_distances
 import time
 
 
-class SGD:
-    """
-    The class for performing collaborative filtering with Stochastic Gradient Descent
+class svdData:
 
-    Methods for post-processing:
-        1. KNN
+    """
+    The class for changing data to a format fit ALS algorithm
+    """
+    def __init__(self, data, R0):
+
+    # Q : the user-item matrix based on given data
+    # R : 1 means the data contains user_u to item_i rating, while 0 means doesn't contain
+        self.data = data
+        self.R0 = R0
+        self.ratings = [(uid, iid, float(r)) for (uid, iid, r) in data.itertuples(index=False)]
+        self.Q, self.R = self._prepare_QR(self.data)
+
+    # def __init__(self, data):
+    #     self.raw = data
+    #     self.ratings = [(uid, iid, float(r)) for (uid, iid, r) in data.itertuples(index=False)]
+        
+
+    def _prepare_QR(self, data):
+        temp = self.R0.copy()
+        for u, i, r in self.ratings:
+            temp[i][u] = r
+
+        Q = temp.values
+        R = (Q > 0) *1
+        return Q, R
+
+
+class SVD:
+    """
+    The class for performing matrix factorization with Singular Vector Deviation
+
+    Methods for pre-processing:
+        1. Stochastic  Gradient Descent
+        2. Alternating Least Squares
 
     Mesures for evaluation:
         1. RMSE: root mean square error
@@ -32,26 +62,43 @@ class SGD:
             q   : item-matrix
         """
 
-        self.data = pd.read_csv(data_dir)
-        del self.data['timestamp']
+        self.df = pd.read_csv(data_dir)
+        del self.df['timestamp']
         if sample:
-            self.data = self.data[0:1000]
+            self.df = self.df[0:1000]
         
-        self.mean = np.mean(self.data['rating'])
-        self.user_count = len(self.data['userId'].unique())
-        self.item_count = len(self.data['movieId'].unique())
+        self.mean = np.mean(self.df['rating'])
+        self.user_count = len(self.df['userId'].unique())
+        self.item_count = len(self.df['movieId'].unique())
 
-        self.bu = None
-        self.bi = None
+        self.data = (self.df.pivot(index='userId', columns='movieId', values='rating')).fillna(0)
+        # user-item matrix
+        self.Q = self.data.values
+        self.R0 = self.data * 0
+        self._bu = None
+        self._bi = None
         self.p = None
         self.q = None
         self.item_dict = None
 
+        self._K = None
+        self.error = None
+        self._trainsets = None
+        self._testsets = None
+        self.params = None
+        self.best_params = None
+
+
+
     def split(self,test_size, seed = 0):
-        train_data, test_data = train_test_split(self.data, test_size = test_size, random_state = seed)
-        return svdData(train_data), svdData(test_data)
+        train_data, test_data = train_test_split(self.df, test_size = test_size, random_state = seed)
+        train_data = svdData(train_data, self.R0)
+        test_data = svdData(test_data, self.R0)
+        self._trainsets = [train_data]
+        self._testsets = [test_data]
+        return train_data , test_data
     
-    def fit(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0 , stopping_driv = 0.001, elapse = False):
+    def sgd(self, data, lr = 0.005,reg = 0.4, rank = 10, num_epoch = 10, seed = 0 , stopping_driv = 0.001, measure = 'rmse', elapse = False):
         """
         A method to perform matrix factorization using Stochastic Gradient Descent
 
@@ -61,8 +108,9 @@ class SGD:
         num_epoch : number of iteration of the SGD procedure, Default:10
         seed      : seed of calling random state
         """
+        self._algo = 'sgd'
         
-        tmp1 = self.data['movieId'].unique()
+        tmp1 = self.df['movieId'].unique()
         self.item_dict = dict(zip(tmp1,[i for i in range(self.item_count)]))
             
         # initialize user matrix and item matrix
@@ -112,184 +160,13 @@ class SGD:
         self.bi = bi
         self.p = p
         self.q = q
-        
-    def err(self, data, measure = 'rmse'):
-        """A method to calculate loss"""
-
-        err = 0
-
-        for uid, mid, r in data.ratings:
-            u = uid - 1
-            i = self.item_dict[mid]
-            
-            if measure == 'rmse':
-                # prediction
-                err += (r- self.mean - self.bu[u] - self.bi[i]- np.dot(self.p[u,:], self.q[i,:]))**2
-                return np.sqrt(err/len(data.ratings))
-            if measure == 'mae':
-                err += np.abs(r - self.mean - self.bu[u] - self.bi[i]- np.dot(self.p[u,:], self.q[i,:]))
-                return err/len(data.ratings)
-
-    def KNN(self, testset, K = 5, measure = 'rmse'):
-        sim = pairwise_distances(self.p, metric = "cosine")
-        err = 0
-        for idx, row in testset.iterrows():
-            u = int(row['userId']) - 1
-            mid = int(row['movieId'])
-            i = self.item_dict[mid]
-            neighbor = np.argsort(sim[u])[-K-1:-1]
-            temp = 0
-            
-            for k in range(K):
-                t = np.dot(self.p[neighbor[k],:], self.q[i,:])
-                if t != 0:
-                    temp += t
-
-
-            est_rating = temp/K
-            if measure == 'rmse':
-                err += (row['rating'] - est_rating) ** 2
-                return np.sqrt(err/len(testset))
-
-    def kfold_split(self, data, K = 3,seed = 0):
-        kf = KFold(n_splits= K, random_state = seed, shuffle = True)
-        trainsets = []
-        testsets = []
-        self._K = K
-        
-        for train_index, cv_index in kf.split(data.raw):
-            trainset = data.raw.iloc[train_index,:]
-            testset = data.raw.iloc[cv_index,:]
-            
-            trainsets.append(svdData(trainset))
-            testsets.append(svdData(testset))
-        self._trainsets = trainsets
-        self._testsets = testsets
-        
-    def cv(self, data, measure,lr = 0.005, reg = 0.4, rank = 10, num_epoch = 10, verbose = True, plot = False, seed = 0):
-        """A method fo perform cross-validation"""
-
-        train_err= [0] * self._K
-        cv_err = [0] * self._K
-
-        for k in range(self._K):
-            self.fit(self._trainsets[k], lr = lr,reg = reg,rank = rank,num_epoch = num_epoch)
-            train_err[k] = self.err(self._trainsets[k], measure)
-            cv_err[k] = self.err(self._testsets[k], measure)
-            if verbose:
-                print("Train {} : {}   Cross-Validation {} : {}".format(measure, round(train_err[k],4), measure, round(cv_err[k],4)))
-
-        if plot:
-            x = np.arange(K) + 1
-            plt.title("Train error and cross-validation error")
-            plt.plot(x,train_err, label = "train error") 
-            plt.plot(x,cv_err, label = "cv error") 
-            plt.xlabel("number of folds")
-            plt.ylabel("{}".format(measure))
-            plt.legend()
-            plt.show()
-        
-        return np.amin(cv_err)
-    
-    def gridParams(self, lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10]):
-        params = []
-        for l, r, rk, nb in itertools.product(lr, reg, rank, num_epoch):
-            params.append((l, r, rk, nb))
-        self.params = params
-
-    def tuningParams(self,data, K = 3, measure = 'rmse',verbose = False):
-        loss = []
-        self.kfold_split(data, K= K)
-        for comb in self.params: 
-            err = self.cv(data, measure = measure, lr = comb[0], reg = comb[1], rank = comb[2], num_epoch = comb[3], verbose = verbose)
-            loss.append(err)
-            if verbose:
-                print("stage {}".format(comb))
-                print("Min cv err: {}".format(err))
-
-        idx = np.argmin(loss)
-        self.best_score = loss[idx]
-        self.best_params = self.params[idx]
-
-
-
-class svdData:
-
-    """
-    The class for changing data to a format fit ALS algorithm
-    """
-    def __init__(self, data, R0):
-
-    # Q : the user-item matrix based on given data
-    # R : 1 means the data contains user_u to item_i rating, while 0 means doesn't contain
-        self.data = data
-        self.R0 = R0
-        self.Q, self.R = self._prepare_QR(self.data)
-
-    def __init__(self, data):
-        self.raw = data
-        self.ratings = [(uid, iid, float(r)) for (uid, iid, r) in data.itertuples(index=False)]
-        
-
-    def _prepare_QR(self, data):
-        temp = self.R0.copy()
-        for idx, row in data.iterrows():
-            u = int(row['userId'])
-            i = int(row['movieId'])
-            temp[i][u] = row['rating']
-
-        Q = temp.values
-        R = (Q > 0) *1
-        return Q, R
-
-
-
-class ALS:
-    """
-    The class for performing collaborative filtering with Alternating Least Squares
-
-    Mesures for evaluation:
-        1. RMSE: root mean square error
-        2. MAE : mean absolute error
-
-    """
-    
-    def __init__(self, data_dir, sample = False):
-        self.df = pd.read_csv(data_dir)
-        del self.df['timestamp']
-        if sample:
-            self.df = self.df[0:1000]
-        self.data = (self.df.pivot(index='userId', columns='movieId', values='rating')).fillna(0)
-        # user-item matrix
-        self.Q = self.data.values
-        self.R0 = self.data * 0
-        # user matrix
-        self.p = None
-        # item matrix
-        self.q = None
-        # kfolds
-        self.K = None
-        self.error = None
-        self.trainsets = None
-        self.testsets = None
-        self.params = None
-        self.best_params = None
+        self.error = self.err(data, measure)
         
         
-                    
-    def split(self,test_size = 0.25, seed = 0):
-        """A method for train_test_split"""
-        train_data, test_data = train_test_split(self.df,test_size = test_size, random_state = seed)
-        train_data = svdData(train_data, self.R0)
-        test_data = svdData(test_data, self.R0)
-        self.trainsets = [train_data]
-        self.testsets = [test_data]
-        return train_data , test_data
-            
-    
-    def fit(self, data, rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', elapse = False):
+        
+    def als(self, data, rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', elapse = False):
         """
-        A method to perform matrix factorization
+        A method to perform matrix factorization using Alternating Least Square
 
         data      : An svdData format
         reg       : regularization parameter: lambda, Defalt: 0.4
@@ -299,6 +176,7 @@ class ALS:
         elapse    : if true, print the time of fitting 
 
         """
+        self._algo = 'als'
         I = np.eye(rank)
         np.random.seed(0)
         p = np.random.normal(2.5,1, size = (self.Q.shape[0], rank))
@@ -330,74 +208,120 @@ class ALS:
              print("Total time: {}s".format(last))
         self.q = q
         self.p = p
-        self.error = self.err(data)
-        
+        self.error = self.err(data, measure)
         
     def err(self, data, measure = 'rmse'):
-        """data: als data"""
-        if measure == 'rmse':
-            loss = np.sum((data.R * (self.Q - np.dot(self.p, self.q.T))) ** 2)/ np.sum(data.R)
-            return np.sqrt(loss)
-        if measure == 'mae':
-            loss = np.sum(np.abs(data.R * (self.Q - np.dot(self.p, self.q.T))))/ np.sum(data.R) 
-            return loss
-    
-    def kfolds_split(self, als_data, K = 3, seed = 0):
+        """A method to calculate loss"""
+        if self._algo == 'sgd':
+            err = 0
+            for uid, mid, r in data.ratings:
+                u = uid - 1
+                i = self.item_dict[mid]
+
+                if measure == 'rmse':
+                    # prediction
+                    err += (r- self.mean - self.bu[u] - self.bi[i]- np.dot(self.p[u,:], self.q[i,:]))**2
+                    return np.sqrt(err/len(data.ratings))
+                if measure == 'mae':                
+                    return err/len(data.ratings)
+        if self._algo == 'als':
+            if measure == 'rmse':
+                loss = np.sum((data.R * (self.Q - np.dot(self.p, self.q.T))) ** 2)/ np.sum(data.R)
+                return np.sqrt(loss)
+            if measure == 'mae':
+                loss = np.sum(np.abs(data.R * (self.Q - np.dot(self.p, self.q.T))))/ np.sum(data.R) 
+                return loss
+
+    def KNN(self, testset, K = 5, measure = 'rmse'):
+        self.sim = pairwise_distances(self.p, metric = "cosine")
+        err = 0
+        for uid, mid, r, in testset.ratings:
+            u = uid - 1
+            i = self.item_dict[mid]
+            neighbors = np.argsort(self.sim[u])[-K-1:-1]
+            sum_sim = 0
+            sum_rating = 0
+            
+            
+            for k in range(K):
+                rate = np.dot(self.p[neighbors[k],:], self.q[i,:])
+                if rate > 0:
+                    sum_sim += self.sim[u][neighbors[k]]
+                    sum_rating += rate * self.sim[u][neighbors[k]]
+
+
+            est_rating = sum_rating/sum_sim
+            if measure == 'rmse':
+                err += (r - est_rating) ** 2
+                return np.sqrt(err/len(testset.ratings))
+
+    def kfold_split(self, svd_data, K = 3,seed = 0):
         kf = KFold(n_splits= K, random_state = seed, shuffle = True)
-        self.K = K
         trainsets = []
-        cvsets = []
+        testsets = []
+        self._K = K
         
-        for train_index, cv_index in kf.split(als_data.data):
-            trainset = svdData(als_data.data.iloc[train_index,:], self.R0)
-            cvset = svdData(als_data.data.iloc[cv_index,:], self.R0)
+        for train_index, test_index in kf.split(svd_data.data):
+            trainset = svd_data.data.iloc[train_index,:]
+            testset = svd_data.data.iloc[test_index,:]
             
-            trainsets.append(trainset)
-            cvsets.append(cvset)
-        self.trainsets = trainsets
-        self.cvsets = cvsets
+            trainsets.append(svdData(trainset,self.R0))
+            testsets.append(svdData(testset,self.R0))
+        self._trainsets = trainsets
+        self._testsets = testsets
         
-    def cv(self,rank = 10, reg = 0.1, num_epoch = 10, measure = 'rmse', verbose = True, plot = False):
-        train_loss = []
-        test_loss = []
-        for k in range(self.K):
-            train = self.trainsets[k]
-            test = self.cvsets[k]
-            self.fit(train, rank = rank, num_epoch = num_epoch, measure = measure)
-            train_loss.append(self.error)
-            test_loss.append(self.err(test,measure = measure))
-            
+    def cv(self, data, measure,lr = 0.005, reg = 0.4, rank = 10, num_epoch = 10, verbose = True, plot = False, seed = 0):
+        """A method fo perform cross-validation"""
+    
+        train_err= [0] * self._K
+        test_err = [0] * self._K
+
+        
+        for k in range(self._K):
+            if self._algo == 'sgd':
+                self.sgd(self._trainsets[k], lr = lr,reg = reg,rank = rank,num_epoch = num_epoch)
+            if self._algo == 'als':
+                self.als(self._trainsets[k], rank = rank, num_epoch = num_epoch, measure = measure)
+            train_err[k] = self.error
+            test_err[k] = self.err(self._testsets[k], measure)
             if verbose:
-                print("Train {} : {}   Cross-Validation {} : {}".format(measure, train_loss[k], measure,test_loss[k]))
-        
+                print("Train {} : {}   Cross-Validation {} : {}".format(measure, round(train_err[k],4), measure, round(test_err[k],4)))
+            
         if plot:
-            x = np.arange(self.K) + 1
+            x = np.arange(K) + 1
             plt.title("Train error and cross-validation error")
-            plt.plot(x,train_loss, label = "train error") 
-            plt.plot(x,test_loss, label = "test error") 
+            plt.plot(x,train_err, label = "train error") 
+            plt.plot(x,test_err, label = "cv error") 
             plt.xlabel("number of folds")
             plt.ylabel("{}".format(measure))
             plt.legend()
             plt.show()
         
-        return np.min(test_loss)
+        return np.amin(test_err)
     
-    def gridParams(self, rank = [10],  reg = [0.1] , num_epoch = [10], K = [3]):
+    def gridParams(self, algo, lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10]):
         params = []
-        for rk, r, np, k in itertools.product(rank, reg, num_epoch, K):
-            params.append((rk, r, np, k))
+        self._algo = algo
+        if self._algo == 'sgd':
+            for l, r, rk, np in itertools.product(lr, reg, rank, num_epoch):
+                params.append((l, r, rk, np))
+        if self._algo == 'als':
+            for rk, r, np in itertools.product(rank, reg, num_epoch):
+                params.append((rk, r, np))
         self.params = params
-    
-    def tuningParams(self, data, measure = 'rmse', verbose = True):
-        self.kfolds_split(data)
-        loss = []
 
-        for comb in self.params:
-            test_err = self.cv(measure = measure, rank = comb[0], reg = comb[1], num_epoch = comb[2],verbose = verbose)
-            loss.append(test_err)
-            if verbose == True:
+    def tuningParams(self,data, K = 3, measure = 'rmse',verbose = False):
+        loss = []
+        self.kfold_split(data, K= K)
+        for comb in self.params: 
+            if self._algo == 'sgd':
+                err = self.cv(data, measure = measure, lr = comb[0], reg = comb[1], rank = comb[2], num_epoch = comb[3], verbose = verbose)
+            if self._algo == 'als':
+                err = self.cv(data, measure = measure, reg = comb[1], rank = comb[0], num_epoch = comb[2], verbose = verbose)
+            loss.append(err)
+            if verbose:
                 print("stage {}".format(comb))
-                print("Min cv err: {}".format(test_err))
+                print("Min cv err: {}".format(err))
 
         idx = np.argmin(loss)
         self.best_score = loss[idx]
