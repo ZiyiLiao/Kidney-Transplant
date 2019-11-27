@@ -1,7 +1,6 @@
 # Movies Recommender System
 
-This is a reommender system building with movies rating [Movielens](http://grouplens.org/datasets/movielens/)
-The whole system segments users as **New User** and **Exsiting User** and apply different analysis on each segment.
+This is a reommender system building with [Movielens](http://grouplens.org/datasets/movielens/) movie ratings.The whole system segments users as **New User** and **Exsiting User** and apply different analysis on each segment inspired by [Scikit-Learn](https://scikit-learn.org/stable/)
 
 ## New User
 
@@ -20,5 +19,19 @@ However, in the methods comparison, I mainly used RMSE
 
 The prediction process is to predict the rating after performing matrix facotrization and the results can be used to recommend movies. Here I used KNN algorithm to do so.
 
+**Benchmark**
+```
+Training time:
 
-----------
+ SVD : 72.5138s
+ ALS : 21.6902s
+
+Evaluating RMSE:
+
+  Testing Error
+SVD 0.018424 
+ALS 1.3086509715004353
+SVD-KNN 0.0035207775636804306
+ALS-KNN 0.010562332691041293
+
+```
