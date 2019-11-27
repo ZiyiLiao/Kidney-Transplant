@@ -35,3 +35,7 @@ SVD-KNN     0.000251               0.003521
 ALS-KNN     0.001760               0.007042
 
 ```
+
+**Analysis**
+
+![The SDG-KNN](https://github.com/ZiyiLiao/Movies-Recommender/blob/master/output/SGD-KNN.png)
