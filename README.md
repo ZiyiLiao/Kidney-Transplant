@@ -28,10 +28,10 @@ Training time:
 
 Evaluating RMSE:
 
-                     Testing Error
-SVD                  0.018424 
-ALS                  1.308651
-SVD-KNN              0.003521
-ALS-KNN              0.010562 
+          Training Error         Testing Error
+SVD         0.002393               0.018424 
+ALS         0.655201               1.308651
+SVD-KNN     0.000251               0.003521
+ALS-KNN     0.001760               0.007042
 
 ```
