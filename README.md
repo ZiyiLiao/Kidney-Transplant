@@ -37,5 +37,6 @@ ALS-KNN     0.001760               0.007042
 ```
 
 **Analysis**
-<img src="https://github.com/ZiyiLiao/Movies-Recommender/blob/master/output/SGD-KNN.png" alt="drawing" width="200"/>
+
+<img src="https://github.com/ZiyiLiao/Movies-Recommender/blob/master/output/SGD-KNN.png" alt="drawing" width="400"/>
 
