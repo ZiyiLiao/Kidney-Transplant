@@ -11,20 +11,17 @@ import time
 class mfData:
 
     """
-    The class for changing data to a format fit ALS algorithm
+    The class for changing data to a format fit matrix factorization
     """
     def __init__(self, data, R0):
 
     # Q : the user-item matrix based on given data
-    # R : 1 means the data contains user_u to item_i rating, while 0 means doesn't contain
+    # R : selector matrix,  1 means the data contains user_u to item_i rating, while 0 means doesn't contain
         self.data = data
         self.R0 = R0
         self.ratings = [(uid, iid, float(r)) for (uid, iid, r) in data.itertuples(index=False)]
         self.Q, self.R = self._prepare_QR(self.data)
 
-    # def __init__(self, data):
-    #     self.raw = data
-    #     self.ratings = [(uid, iid, float(r)) for (uid, iid, r) in data.itertuples(index=False)]
         
 
     def _prepare_QR(self, data):
@@ -46,9 +43,12 @@ class MF:
         1. Stochastic Gradient Descent
         2. Alternating Least Squares
 
-    Mesures for evaluation:
+    Measures for evaluation:
         1. RMSE: root mean square error
         2. MAE : mean absolute error
+
+    Method for Prediction:
+        1. K-nearest Neighbors
 
     """
 
@@ -57,30 +57,47 @@ class MF:
         """
         Attributes:
             mean: global mean for rating
-            bu  : bias associates with users' rating 
-            bi  : bias associates with items' rating
+            _bu : bias associates with users' rating 
+            _bi : bias associates with items' rating
             p   : user-matrix
             q   : item-matrix
+
+            user_count : number of users
+            item_count : number of items
+            item_dict  : a dictionary for looking up item index in the item-matrix
+
+            data : user - item matrix in DataFrame format
+            Q    : user - item matrix in numpy array format
+            R0   : origin selector matrix, all elements are 0
+
+            _K : K-folds
+            error: training error
+
+            params: parameters for tuning
+            best_params: parameters with minimum cross-validation error
+
         """
 
         self.df = pd.read_csv(data_dir)
         del self.df['timestamp']
-        if sample:
-            self.df = self.df[0:1000]
         
         self.mean = np.mean(self.df['rating'])
         self.user_count = len(self.df['userId'].unique())
         self.item_count = len(self.df['movieId'].unique())
-
         self.data = (self.df.pivot(index='userId', columns='movieId', values='rating')).fillna(0)
-        # user-item matrix
-        self.Q = self.data.values
-        self.R0 = self.data * 0
+
         self._bu = None
         self._bi = None
         self.p = None
         self.q = None
+
+
         self.item_dict = None
+
+        self.Q = self.data.values
+        self.R0 = self.data * 0
+
+        
 
         self._K = None
         self.error = None
@@ -109,6 +126,8 @@ class MF:
         num_epoch : number of iteration of the SGD procedure, Default:10
         seed      : seed of calling random state
         """
+        
+        # store the algorim status
         self._algo = 'sgd'
         
         tmp1 = self.df['movieId'].unique()
@@ -123,7 +142,9 @@ class MF:
         bu = np.zeros(self.user_count)
         bi = np.zeros(self.item_count)
 
+        # count the training time
         start_time = time.time()
+
         for this_epoch in range(num_epoch):
             
             for uid, mid, r in data.ratings:
@@ -142,6 +163,7 @@ class MF:
                 if(np.abs(deriv) > stopping_driv):
                     bi[i] += lr * deriv
 
+                # updata user-matrix and item-matrix
                 for f in range(rank):
                     puf = p[u,f]
                     qif = q[i,f]
@@ -161,6 +183,8 @@ class MF:
         self.bi = bi
         self.p = p
         self.q = q
+
+        # store the training error
         self.error = self.err(data, measure)
         
  
@@ -177,7 +201,11 @@ class MF:
         elapse    : if true, print the time of fitting 
 
         """
+        
+        # store the algorithm status
         self._algo = 'als'
+        
+        # set up the user-matrix and item-matrix
         I = np.eye(rank)
         np.random.seed(0)
         p = np.random.normal(2.5,1, size = (self.Q.shape[0], rank))
@@ -186,6 +214,7 @@ class MF:
         start_time = time.time()
         for this_epoch in range(num_epoch):
 
+            # update user-matrix
             for u, Iu in enumerate(data.R):
                 j = np.nonzero(Iu)[0]
                 nu = sum(Iu)
@@ -194,7 +223,8 @@ class MF:
                     r = data.Q[u][data.Q[u]!=0]
                     V = q[j,:].T.dot(r.T)
                     p[u,:] = np.dot(np.linalg.inv(A), V)
-
+            
+            # update item-matrix
             for i, Ii in enumerate(data.R.T):
                 j = np.nonzero(Ii)[0]
                 ni = sum(Ii)
@@ -207,12 +237,17 @@ class MF:
         last = round((end_time - start_time), 4)
         if elapse:
              print("Total time: {}s".format(last))
+
+        # update instance variables
         self.q = q
         self.p = p
+
+        # update training error
         self.error = self.err(data, measure)
         
     def err(self, data, measure = 'rmse'):
         """A method to calculate loss"""
+        
         if self._algo == 'sgd':
             err = 0
             for uid, mid, r in data.ratings:
@@ -225,6 +260,7 @@ class MF:
                     return np.sqrt(err/len(data.ratings))
                 if measure == 'mae':                
                     return err/len(data.ratings)
+
         if self._algo == 'als':
             if measure == 'rmse':
                 loss = np.sum((data.R * (self.Q - np.dot(self.p, self.q.T))) ** 2)/ np.sum(data.R)
@@ -238,12 +274,13 @@ class MF:
         kf = KFold(n_splits= K, random_state = seed, shuffle = True)
         trainsets = []
         testsets = []
+        # update _K
         self._K = K
         
         for train_index, test_index in kf.split(svd_data.data):
             trainset = svd_data.data.iloc[train_index,:]
             testset = svd_data.data.iloc[test_index,:]
-            
+            # convert to mfData and then store into list
             trainsets.append(mfData(trainset,self.R0))
             testsets.append(mfData(testset,self.R0))
         self._trainsets = trainsets
@@ -255,12 +292,14 @@ class MF:
         train_err= [0] * self._K
         test_err = [0] * self._K
 
-        
         for k in range(self._K):
+            
             if self._algo == 'sgd':
                 self.sgd(self._trainsets[k], lr = lr,reg = reg,rank = rank,num_epoch = num_epoch)
+
             if self._algo == 'als':
                 self.als(self._trainsets[k], rank = rank, num_epoch = num_epoch, measure = measure)
+
             train_err[k] = self.error
             test_err[k] = self.err(self._testsets[k], measure)
             if verbose:
@@ -280,6 +319,8 @@ class MF:
     
     def gridParams(self, algo, lr = [0.005], reg = [0.4] ,rank = [10], num_epoch = [10]):
         params = []
+        
+        # set up the algorithm
         self._algo = algo
 
         if self._algo == 'als':
@@ -293,31 +334,45 @@ class MF:
 
     def tuningParams(self,data, K = 3, measure = 'rmse',verbose = False):
         loss = []
+
+        # split into K-folds
         self.kfold_split(data, K= K)
+
         for comb in self.params: 
+
             if self._algo == 'sgd':
                 err = self.cv(data, measure = measure, lr = comb[0], reg = comb[1], rank = comb[2], num_epoch = comb[3], verbose = verbose)
-            if self._algo == 'als':
+            
+            elif self._algo == 'als':
                 err = self.cv(data, measure = measure, reg = comb[1], rank = comb[0], num_epoch = comb[2], verbose = verbose)
             loss.append(err)
             if verbose:
                 print("stage {}".format(comb))
                 print("Min cv err: {}".format(err))
-
+        # store the minimum cross-validation error and the corresponding parameters
         idx = np.argmin(loss)
         self.best_score = loss[idx]
         self.best_params = self.params[idx]
         
     def KNN(self, train, test, K = 5, measure = 'rmse', elapse = False):
+        """A method to predict using item-item recommendation"""
+
+        # calculate the item-similarity matrix
         sim = pairwise_distances(self.q, metric = "cosine")
+
         err = 0
         start_time = time.time()
         for uid, mid, r in test.ratings:
             u = uid - 1
             i = self.item_dict[mid]
 
+            # sort the idx with the similarity
             neighbors_idx = np.argsort(sim[i])
+
+            # delete neighbors with rating 0
             neighbor_rating = np.trim_zeros(train.Q[u,neighbors_idx])[0:K]
+
+            # predict
             est = sum(neighbor_rating)/np.count_nonzero(neighbor_rating)
             if measure == 'rmse':
                 err += (r - est) **2
