@@ -19,7 +19,7 @@ However, in the methods comparison, I mainly used RMSE
 
 The prediction process is to predict the rating after performing matrix facotrization and the results can be used to recommend movies. Here I used KNN algorithm to do so.
 
-**Benchmark**
+**[Benchmark](https://github.com/ZiyiLiao/Movies-Recommender/blob/master/doc/main.ipynb)**
 ```
 Training time:
 
