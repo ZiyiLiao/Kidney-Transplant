@@ -38,4 +38,4 @@ ALS-KNN     0.001760               0.007042
 
 **Analysis**
 
-![The SDG-KNN](https://github.com/ZiyiLiao/Movies-Recommender/blob/master/output/SGD-KNN.png)
+![The SDG-KNN](https://github.com/ZiyiLiao/Movies-Recommender/blob/master/output/SGD-KNN.png = 100x20)
